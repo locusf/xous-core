@@ -42,6 +42,11 @@ sha2-bao1x = { path = "../../bao1x-boot/sha2-bao1x", optional = true, default-fe
 linked_list_allocator = { version = "0.10.5", optional = true }
 slh-dsa = { path = "../../bao1x-boot/slh-dsa-bao1x", optional = true, default-features = false }
 typenum = { version = "1.20", features = ["const-generics"], optional = true }
+k256 = { version = "0.13", default-features = false, features = [
+    "ecdsa",
+    "ecdh",
+    "arithmetic",
+], optional = true }
 
 # for generating glitch-protection delays
 rand_chacha = { version = "0.3.1", default-features = false }
@@ -71,6 +76,9 @@ sigcheck = [
     "slh-dsa/hardened-verify",
     "typenum",
 ]
+# secp256k1 ECDSA/ECDH support (RustCrypto k256), for applications that need this curve
+# (e.g. blockchain-adjacent signing) rather than the ed25519 curve used by the boot chain.
+secp256k1 = ["k256"]
 board-baosec = [
     "std",
     "camera-gc2145",

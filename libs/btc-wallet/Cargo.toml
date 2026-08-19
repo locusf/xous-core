@@ -1,0 +1,37 @@
+[package]
+name = "btc-wallet"
+version = "0.1.0"
+edition = "2021"
+description = "Bitcoin hardware-wallet logic (BIP-32/39, PSBT signing) for the dabao-console USB-serial wallet extension"
+license = "Apache-2.0"
+
+# Maintainer's note: this crate is deliberately kept free of any `bao1x-hal`/`xous`
+# hardware dependency so that its cryptographic and protocol logic can be unit
+# tested on the host (`cargo test -p btc-wallet`) against known BIP-32/39/173
+# test vectors, independently of the riscv32imac-unknown-xous-elf target used
+# by the actual dabao-console application.
+#
+# The wallet is exposed over dabao-console's existing USB-serial shell console (see
+# apps-dabao/dabao-console/src/cmds/btc_cmd.rs) rather than a dedicated encrypted USB HID
+# channel, since the console already runs over a serial link.
+
+[dependencies]
+# secp256k1 ECDSA, shared with bao1x-hal's `secp256k1` feature (same crate/version,
+# unified by Cargo's dependency resolution -- see libs/bao1x-hal/src/secp256k1.rs).
+k256 = { version = "0.13", default-features = false, features = [
+    "ecdsa",
+    "ecdh",
+    "arithmetic",
+] }
+sha2 = { version = "0.10", default-features = false }
+hmac = { version = "0.12", default-features = false }
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+ripemd = { version = "0.1", default-features = false }
+zeroize = { version = "1", default-features = false, features = ["alloc"] }
+rand_core = { version = "0.6", default-features = false }
+# AEAD used solely to encrypt the seed at rest under a PIN-derived key (see src/pin.rs);
+# small, pure-Rust, and already proven to build for this workspace's xous target.
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+
+[features]
+default = []

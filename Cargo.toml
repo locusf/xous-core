@@ -119,6 +119,7 @@ members = [
   "libs/bao1x-api",
   "services/keystore",
   "libs/precursor-hal",
+  "libs/btc-wallet",
   "apps-baosec/vault2",
   # Defcon 34 badge
   "libs/dc34-api",

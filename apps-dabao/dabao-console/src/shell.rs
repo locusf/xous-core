@@ -39,7 +39,10 @@ fn shell() {
     let mut was_callback = false;
     let mut history_index: isize = 0;
 
-    let usb = UsbHid::new();
+    // Kept alive for the duration of the shell loop (its `Drop` impl releases the connection);
+    // no longer used directly for the per-keystroke echo -- see the comment in the Keypress
+    // handler below for why that now goes through print!/println! instead.
+    let _usb = UsbHid::new();
 
     let mut input = String::new();
     loop {
@@ -50,7 +53,19 @@ fn shell() {
             Some(ConsoleOp::Keypress) => msg_scalar_unpack!(msg, k1, _k2, _k3, _k4, {
                 let k = char::from_u32(k1 as u32).unwrap_or('\u{0000}');
                 if echo.load(std::sync::atomic::Ordering::SeqCst) {
-                    usb.serial_send_nb(&[k1 as u8]).ok();
+                    // Route the per-keystroke echo through the *same* print!/println! pipeline
+                    // (-> log_server -> LogString -> usb-bao1x) that all REPL output already
+                    // uses, rather than `usb.serial_send_nb()`'s separate, direct IPC path to
+                    // usb-bao1x. Those are two independent, unsynchronized routes to the same
+                    // physical USB serial port; mixing them means the kernel/log_server can
+                    // deliver a fast, direct keystroke echo *ahead of* a still-in-flight,
+                    // slower REPL response that was logically printed earlier, interleaving the
+                    // two into exactly the kind of garbled/out-of-order output seen on-device.
+                    // An explicit flush keeps this responsive (immediate per-character echo)
+                    // despite stdout being block-buffered on this target.
+                    use std::io::Write;
+                    print!("{}", k);
+                    std::io::stdout().flush().ok();
                 }
                 if k1 == 0x08 {
                     // backspace character

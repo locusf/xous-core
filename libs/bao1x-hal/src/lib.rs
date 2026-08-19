@@ -56,6 +56,8 @@ pub mod mbox;
 pub mod rram;
 #[cfg(not(feature = "hosted-baosec"))]
 pub mod rtc;
+#[cfg(feature = "secp256k1")]
+pub mod secp256k1;
 #[cfg(feature = "security")]
 pub mod sigcheck;
 #[cfg(not(feature = "hosted-baosec"))]

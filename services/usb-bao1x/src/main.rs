@@ -831,14 +831,39 @@ pub(crate) fn main_hw() -> ! {
                 // the logger API is "best effort" only. Because retries and response codes can cause problems
                 // in the logger API, if anything goes wrong, we prefer to discard characters rather than get
                 // the whole subsystem stuck in some awful recursive error handling hell.
+                //
+                // `serial_write_irq_safe` (like the underlying `usbd-serial::SerialPort::write`) is a
+                // non-blocking call that can legitimately return `Ok(n)` with `n < chunk.len()` (or
+                // even `Ok(0)`) once the USB CDC's currently-available buffer space is smaller than
+                // what's being offered -- see `SerialSendData`/`SerialSendDataBlocking` above, which
+                // already chunk at `SERIAL_MAX_PACKET_SIZE` for exactly this reason. This handler
+                // previously discarded that partial-write count entirely (`.ok()`), so anything past
+                // the first accepted bytes was silently dropped. Unlike those two opcodes, `LogString`
+                // has no caller waiting to retry a short write, so this loop retries internally.
+                //
+                // Critically, an `Ok(0)` means the transmit buffer is *currently* full, not that the
+                // link is dead -- draining it happens asynchronously via the USB hardware's own
+                // interrupt-driven FIFO service, which takes real wall-clock time. Retrying in a tight
+                // spin loop with no delay gives that interrupt no opportunity to actually run and free
+                // up space, so a short sleep is inserted specifically on `Ok(0)` before trying again
+                // (bounded, so a stalled/disconnected link can't block this server for long).
                 if let Some(mem_msg) = msg.body.memory_message() {
                     let buffer = unsafe { Buffer::from_memory_message(mem_msg) };
                     match buffer.to_original::<api::UsbString, _>() {
                         Ok(usb_send) => {
-                            for chunk in
-                                usb_send.s.as_bytes().chunks(bao1x_hal::usb::driver::CRG_UDC_APP_BUFSIZE)
-                            {
-                                cu.serial_write_irq_safe(&chunk).ok();
+                            for chunk in usb_send.s.as_bytes().chunks(crate::hw::SERIAL_MAX_PACKET_SIZE) {
+                                let mut offset = 0;
+                                let mut attempts_left = 64;
+                                while offset < chunk.len() && attempts_left > 0 {
+                                    attempts_left -= 1;
+                                    match cu.serial_write_irq_safe(&chunk[offset..]) {
+                                        Ok(0) => {
+                                            tt.sleep_ms(1).ok();
+                                        }
+                                        Ok(sent) => offset += sent,
+                                        Err(_) => break, // silent errors, per this handler's policy
+                                    }
+                                }
                             }
                         }
                         _ => {} // silent errors

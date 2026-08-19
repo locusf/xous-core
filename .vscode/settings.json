@@ -28,11 +28,11 @@
         "./loader/**"
     ],
     "files.exclude": {
-        "**/.git": true,
-        "**/.svn": true,
-        "**/.hg": true,
-        "**/CVS": true,
         "**/.DS_Store": true,
+        "**/.git": false,
+        "**/.hg": true,
+        "**/.svn": true,
+        "**/CVS": true,
         "**/Thumbs.db": true
     },
     "rust-analyzer.rustfmt.extraArgs": [
@@ -40,5 +40,12 @@
     ],
     "files.trimTrailingWhitespace": true,
     "editor.formatOnSave": true,
-    "cSpell.language": "en,fr"
+    "cSpell.language": "en,fr",
+    "baochip.buildTarget": "dabao",
+    "baochip.xousCorePath": "/home/user/baochip/xous-core",
+    "baochip.xousAppName": "dabao-console",
+    "baochip.serialPortBootloader": "/dev/ttyACM0",
+    "baochip.serialPortRun": "/dev/ttyACM0",
+    "baochip.flashLocation": "/run/media/user/BAOCHIP",
+    "baochip.monitor.echo": true
 }
