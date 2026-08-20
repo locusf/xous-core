@@ -96,11 +96,19 @@ impl BtcCmd {
 /// be especially bad for e.g. a signed transaction's hex.
 fn print_chunked(s: &str) {
     const SAFE_CHUNK: usize = 48;
+    let tt = ticktimer::Ticktimer::new().unwrap();
     for chunk in s.as_bytes().chunks(SAFE_CHUNK) {
         // Safety: every string this command ever builds is plain ASCII (hex digits, bech32/
         // base58 addresses, and literal help/status text), so any byte offset is also a valid
         // UTF-8 char boundary.
         println!("{}", unsafe { core::str::from_utf8_unchecked(chunk) });
+        // A few ms of pacing between chunks. Without it, a burst of output generated right
+        // after a fast/bulk serial input (e.g. a pasted PSBT hex line, as opposed to one typed
+        // key at a time) can trigger the same underlying Corigine USB controller flakiness that
+        // causes truncation (see the `get_app_buf_ptr` "missed IN ACKs" comment in
+        // bao1x-hal's usb/driver.rs) in its other failure mode: a chunk gets sent twice instead
+        // of dropped. Reproduced and confirmed fixed on real hardware across repeated bursts.
+        tt.sleep_ms(5).ok();
     }
 }
 

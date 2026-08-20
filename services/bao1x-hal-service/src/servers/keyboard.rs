@@ -20,6 +20,10 @@ use xous_ipc::Buffer;
 #[cfg(feature = "board-baosec")]
 const KEYUP_DELAY_MS: u64 = 80;
 
+/// Bounded retries (with a short sleep between each) for delivering an injected key to a
+/// listener whose queue is momentarily full -- see the `InjectKey` handler below.
+const KEY_DELIVERY_RETRIES: u32 = 20;
+
 #[cfg(feature = "board-baosec")]
 pub fn handler(_irq_no: usize, arg: *mut usize) {
     let kpc_aoint = unsafe { &mut *(arg as *mut KpcAoInt) };
@@ -315,7 +319,6 @@ fn keyboard_service() {
     }
     */
 
-    #[cfg(feature = "board-baosec")]
     let tt = ticktimer::Ticktimer::new().unwrap();
 
     let mut listeners: Vec<(CID, usize)> = Vec::new();
@@ -490,20 +493,40 @@ fn keyboard_service() {
                             log::info!("ignoring key '{}'({:x})", key, key as u32); // ignore Apple PUA characters
                         } else {
                             log::debug!("injecting key '{}'({:x}) to {}", key, key as u32, conn); // always be noisy about this, it's an exploit path
-                            xous::try_send_message(
-                                conn,
-                                xous::Message::new_scalar(
-                                    listener_op,
-                                    key as u32 as usize,
-                                    '\u{0000}' as u32 as usize,
-                                    '\u{0000}' as u32 as usize,
-                                    '\u{0000}' as u32 as usize,
-                                ),
-                            )
-                            .unwrap_or_else(|_| {
+                            // `try_send_message` is non-blocking: if a burst of keys arrives
+                            // faster than the listener (e.g. a console REPL) can drain its
+                            // queue -- which happens routinely when text is *pasted* (or
+                            // injected from a serial/USB source) rather than typed one key at
+                            // a time -- a full queue silently drops the key. Retry briefly
+                            // with a short backoff to ride out a momentarily-full queue,
+                            // without switching to a blocking send (which could hang key
+                            // delivery forever if a listener never drains at all).
+                            let mut sent = false;
+                            for attempt in 0..KEY_DELIVERY_RETRIES {
+                                match xous::try_send_message(
+                                    conn,
+                                    xous::Message::new_scalar(
+                                        listener_op,
+                                        key as u32 as usize,
+                                        '\u{0000}' as u32 as usize,
+                                        '\u{0000}' as u32 as usize,
+                                        '\u{0000}' as u32 as usize,
+                                    ),
+                                ) {
+                                    Ok(_) => {
+                                        sent = true;
+                                        break;
+                                    }
+                                    Err(_) => {
+                                        if attempt + 1 < KEY_DELIVERY_RETRIES {
+                                            tt.sleep_ms(1).ok();
+                                        }
+                                    }
+                                }
+                            }
+                            if !sent {
                                 log::info!("Input overflow to {}, dropping keys!", conn);
-                                xous::Result::Ok
-                            });
+                            }
                         }
                     }
                 }
