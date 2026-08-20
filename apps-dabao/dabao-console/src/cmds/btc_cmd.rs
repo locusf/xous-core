@@ -83,6 +83,27 @@ impl BtcCmd {
     }
 }
 
+/// Prints `s` broken into short lines instead of one long `println!`.
+///
+/// This works around a known, pre-existing, unresolved limitation in the board's low-level
+/// USB CDC-ACM serial driver (see the "I'm still not sure why we seem to miss some IN ACKs"
+/// comment on `get_app_buf_ptr` in `libs/bao1x-hal/src/usb/driver.rs`): a single print longer
+/// than roughly one USB packet reliably gets truncated on the wire, no matter how the
+/// higher-level retry/backoff logic in `usb-bao1x`'s `LogString` handler is tuned, because the
+/// hardware's own transfer-completion tracking for this endpoint doesn't reliably signal that
+/// it's ready for more data. Short lines have consistently transmitted correctly in testing, so
+/// long output is deliberately broken up here rather than risk silent truncation -- which would
+/// be especially bad for e.g. a signed transaction's hex.
+fn print_chunked(s: &str) {
+    const SAFE_CHUNK: usize = 48;
+    for chunk in s.as_bytes().chunks(SAFE_CHUNK) {
+        // Safety: every string this command ever builds is plain ASCII (hex digits, bech32/
+        // base58 addresses, and literal help/status text), so any byte offset is also a valid
+        // UTF-8 char boundary.
+        println!("{}", unsafe { core::str::from_utf8_unchecked(chunk) });
+    }
+}
+
 const HELP: &str = "btc [newseed <pin> [12|15|18|21|24]] [restore <pin> <mnemonic...>] [unlock <pin>] [fingerprint] [address <path>] [pubkey <path>] [xpub <path>] [sign-psbt <hex>] [extract-psbt <hex>] [wipe]";
 
 impl<'a> ShellCmdApi<'a> for BtcCmd {
@@ -92,21 +113,22 @@ impl<'a> ShellCmdApi<'a> for BtcCmd {
         let mut ret = String::new();
         let mut tokens = args.split(' ');
         let Some(sub_cmd) = tokens.next() else {
-            ret.push_str(HELP);
-            return Ok(Some(ret));
+            print_chunked(HELP);
+            return Ok(None);
         };
 
         match sub_cmd {
             "newseed" | "restore" => {
                 if self.load_locked().is_some() {
-                    ret.push_str(
+                    print_chunked(
                         "a wallet is already provisioned on this device -- run 'btc wipe' first if you really want to replace it",
                     );
-                    return Ok(Some(ret));
+                    return Ok(None);
                 }
                 let Some(pin) = tokens.next() else {
                     write!(ret, "usage: {}", HELP).ok();
-                    return Ok(Some(ret));
+                    print_chunked(&ret);
+                    return Ok(None);
                 };
                 let pin = pin.to_string();
 
@@ -119,15 +141,16 @@ impl<'a> ShellCmdApi<'a> for BtcCmd {
                         21 => 224,
                         24 => 256,
                         _ => {
-                            ret.push_str("word count must be one of 12/15/18/21/24");
-                            return Ok(Some(ret));
+                            print_chunked("word count must be one of 12/15/18/21/24");
+                            return Ok(None);
                         }
                     };
                     match Wallet::generate_mnemonic(&mut env.trng, bits) {
                         Ok(m) => m,
                         Err(e) => {
                             write!(ret, "failed to generate mnemonic: {:?}", e).ok();
-                            return Ok(Some(ret));
+                            print_chunked(&ret);
+                            return Ok(None);
                         }
                     }
                 } else {
@@ -160,8 +183,8 @@ impl<'a> ShellCmdApi<'a> for BtcCmd {
             }
             "unlock" => {
                 let Some(pin) = tokens.next() else {
-                    ret.push_str("usage: btc unlock <pin>");
-                    return Ok(Some(ret));
+                    print_chunked("usage: btc unlock <pin>");
+                    return Ok(None);
                 };
                 match self.load_locked() {
                     None => ret.push_str("no wallet provisioned -- run 'btc newseed <pin>' or 'btc restore <pin> <mnemonic...>' first"),
@@ -255,8 +278,12 @@ impl<'a> ShellCmdApi<'a> for BtcCmd {
                     ret.push_str("failed to fully wipe seed");
                 }
             }
-            _ => ret.push_str(HELP),
+            _ => {
+                print_chunked(HELP);
+                return Ok(None);
+            }
         }
-        Ok(Some(ret))
+        print_chunked(&ret);
+        Ok(None)
     }
 }

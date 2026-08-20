@@ -833,20 +833,23 @@ pub(crate) fn main_hw() -> ! {
                 // the whole subsystem stuck in some awful recursive error handling hell.
                 //
                 // `serial_write_irq_safe` (like the underlying `usbd-serial::SerialPort::write`) is a
-                // non-blocking call that can legitimately return `Ok(n)` with `n < chunk.len()` (or
-                // even `Ok(0)`) once the USB CDC's currently-available buffer space is smaller than
-                // what's being offered -- see `SerialSendData`/`SerialSendDataBlocking` above, which
-                // already chunk at `SERIAL_MAX_PACKET_SIZE` for exactly this reason. This handler
-                // previously discarded that partial-write count entirely (`.ok()`), so anything past
-                // the first accepted bytes was silently dropped. Unlike those two opcodes, `LogString`
-                // has no caller waiting to retry a short write, so this loop retries internally.
+                // non-blocking call that can legitimately fail to accept the whole buffer once the
+                // USB CDC's currently-available transmit space is smaller than what's being offered --
+                // see `SerialSendData`/`SerialSendDataBlocking` above, which already chunk at
+                // `SERIAL_MAX_PACKET_SIZE` for exactly this reason. This handler previously discarded
+                // that outcome entirely (`.ok()`), so anything past the first accepted bytes was
+                // silently dropped. Unlike those two opcodes, `LogString` has no caller waiting to
+                // retry a short write, so this loop retries internally.
                 //
-                // Critically, an `Ok(0)` means the transmit buffer is *currently* full, not that the
-                // link is dead -- draining it happens asynchronously via the USB hardware's own
-                // interrupt-driven FIFO service, which takes real wall-clock time. Retrying in a tight
-                // spin loop with no delay gives that interrupt no opportunity to actually run and free
-                // up space, so a short sleep is inserted specifically on `Ok(0)` before trying again
-                // (bounded, so a stalled/disconnected link can't block this server for long).
+                // Critically, per `usbd-serial::SerialPort::write`'s own implementation, a *full*
+                // transmit buffer (nothing accepted at all) is reported as `Err(UsbError::WouldBlock)`,
+                // not `Ok(0)` -- only a *partial* accept comes back as `Ok(n)` with `n < requested`.
+                // Treating `WouldBlock` as a fatal error (as this loop originally did) means it gives
+                // up after the very first packet-sized chunk succeeds and the buffer fills up, which
+                // is exactly the "truncated after ~1 USB packet" symptom this was written to fix.
+                // `WouldBlock` needs the same "buffer is full right now, not dead -- wait a moment for
+                // the USB hardware's interrupt-driven FIFO to drain, then retry" treatment as `Ok(0)`;
+                // other errors are still treated as fatal and abandon the rest of the message.
                 if let Some(mem_msg) = msg.body.memory_message() {
                     let buffer = unsafe { Buffer::from_memory_message(mem_msg) };
                     match buffer.to_original::<api::UsbString, _>() {
@@ -857,7 +860,7 @@ pub(crate) fn main_hw() -> ! {
                                 while offset < chunk.len() && attempts_left > 0 {
                                     attempts_left -= 1;
                                     match cu.serial_write_irq_safe(&chunk[offset..]) {
-                                        Ok(0) => {
+                                        Ok(0) | Err(usb_device::UsbError::WouldBlock) => {
                                             tt.sleep_ms(1).ok();
                                         }
                                         Ok(sent) => offset += sent,

@@ -19,6 +19,7 @@ bao1x-api = { path = "../../libs/bao1x-api" }
 bao1x-hal-service = { path = "../../services/bao1x-hal-service", optional = true }
 bao1x-emu = { path = "../../services/bao1x-emu", optional = true }
 usb-bao1x = { path = "../../services/usb-bao1x" }
+xous-api-susres = { path = "../../api/xous-api-susres" }
 
 # loadable BIO
 keystore = { path = "../../services/keystore", features = ["board-dabao"] }

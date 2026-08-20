@@ -80,12 +80,15 @@ impl CommonEnv {
 ///// 1. add your module here, and pull its namespace into the local crate
 mod btc_cmd;
 use btc_cmd::*;
+mod reset_cmd;
+use reset_cmd::*;
 
 pub struct CmdEnv {
     common_env: CommonEnv,
     lastverb: String,
     ///// 2. declare storage for your command here.
     btc_cmd: BtcCmd,
+    reset_cmd: ResetCmd,
 }
 impl CmdEnv {
     pub fn new(xns: &xous_names::XousNames, echo: Arc<AtomicBool>) -> CmdEnv {
@@ -104,6 +107,7 @@ impl CmdEnv {
             lastverb: String::new(),
             ///// 3. initialize your storage, by calling new()
             btc_cmd: BtcCmd::new(),
+            reset_cmd: ResetCmd::new(),
         }
     }
 
@@ -117,6 +121,7 @@ impl CmdEnv {
         let commands: &mut [&mut dyn ShellCmdApi] = &mut [
             ///// 4. add your command to this array, so that it can be looked up and dispatched
             &mut self.btc_cmd,
+            &mut self.reset_cmd,
         ];
 
         if let Some(cmdline) = maybe_cmdline {

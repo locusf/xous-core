@@ -10,6 +10,7 @@ from commands import flash
 from commands import doctor
 from commands import boot
 from commands import app
+from commands import reset
 
 VERSION = "0.1.3"
 
@@ -29,6 +30,7 @@ def main():
     doctor.register(sub)
     boot.register(sub)
     app.register(sub)
+    reset.register(sub)
 
     args = ap.parse_args()
 
