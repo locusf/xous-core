@@ -184,6 +184,15 @@ impl<'a> ShellCmdApi<'a> for BtcCmd {
                             write!(ret, "provisioned in memory but failed to persist: {:?}", e).ok();
                         }
                     },
+                    Err(btc_wallet::WalletError::Pin(btc_wallet::pin::PinError::TooWeak)) => {
+                        write!(
+                            ret,
+                            "PIN too weak -- must be at least {} characters, and not a repeated \
+                             character or a straight ascending/descending run",
+                            btc_wallet::pin::MIN_PIN_LEN
+                        )
+                        .ok();
+                    }
                     Err(e) => {
                         write!(ret, "failed to provision wallet: {:?}", e).ok();
                     }

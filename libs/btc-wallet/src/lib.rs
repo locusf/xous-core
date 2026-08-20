@@ -97,6 +97,10 @@ impl Wallet {
     /// Returns the ready-to-use in-memory `Wallet` alongside the encrypted seed blob (see
     /// [`pin::LockedSeed::to_bytes`]) that the caller is responsible for persisting (e.g. in
     /// `keystore` app-key slots) -- this crate has no storage of its own.
+    ///
+    /// Rejects `pin_code` outright (before ever touching `mnemonic`/`rng`) if it fails
+    /// [`pin::check_pin_strength`] -- see that function's docs for why this matters given
+    /// this scheme's deliberate lack of a wrong-PIN lockout.
     pub fn provision<R: RngCore + CryptoRng>(
         mnemonic: &str,
         passphrase: &str,
@@ -105,6 +109,7 @@ impl Wallet {
         rng: &mut R,
     ) -> Result<(Self, Vec<u8>), WalletError> {
         bip39::validate_mnemonic(mnemonic)?;
+        pin::check_pin_strength(pin_code)?;
         let mut seed = bip39::mnemonic_to_seed(mnemonic, passphrase);
         let wallet = Self::from_seed(&seed, testnet);
         let locked = pin::LockedSeed::lock(&seed, pin_code, rng).to_bytes();
@@ -254,7 +259,7 @@ mod tests {
         let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         let mut rng = FakeRng(7);
         let (wallet, locked_blob) =
-            Wallet::provision(mnemonic, "TREZOR", "13579", false, &mut rng).unwrap();
+            Wallet::provision(mnemonic, "TREZOR", "1359702468", false, &mut rng).unwrap();
         assert_eq!(locked_blob.len(), pin::LOCKED_SEED_LEN);
 
         let path = "m/84'/0'/0'/0/0";
@@ -262,15 +267,25 @@ mod tests {
 
         // simulate a reboot: the in-memory wallet is gone, only the locked blob (as would be
         // read back from `keystore`) and the PIN remain.
-        let reopened = Wallet::unlock(&locked_blob, "13579", false).unwrap();
+        let reopened = Wallet::unlock(&locked_blob, "1359702468", false).unwrap();
         assert_eq!(reopened.address_p2wpkh(path).unwrap(), expected_address);
         assert_eq!(reopened.master_fingerprint(), wallet.master_fingerprint());
 
         // wrong PIN must not unlock, and must not silently produce a differently-derived
         // (but still "valid looking") wallet -- it must fail outright.
-        match Wallet::unlock(&locked_blob, "00000", false) {
+        match Wallet::unlock(&locked_blob, "0000000000", false) {
             Err(WalletError::Pin(pin::PinError::WrongPinOrCorrupt)) => {}
             other => panic!("expected wrong-PIN rejection, got {:?}", other.map(|_| ())),
+        }
+    }
+
+    #[test]
+    fn provision_rejects_weak_pin() {
+        let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let mut rng = FakeRng(11);
+        match Wallet::provision(mnemonic, "", "1234", false, &mut rng) {
+            Err(WalletError::Pin(pin::PinError::TooWeak)) => {}
+            other => panic!("expected weak-PIN rejection, got {:?}", other.map(|_| ())),
         }
     }
 }

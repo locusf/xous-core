@@ -40,12 +40,60 @@ pub const LOCKED_SEED_LEN: usize = SALT_LEN + NONCE_LEN + SEED_LEN + TAG_LEN;
 /// an actual device) and adjusting this constant if the tradeoff feels off in practice.
 pub const PBKDF2_ITERATIONS: u32 = 100_000;
 
+/// Minimum PIN length enforced at provisioning time by [`check_pin_strength`].
+///
+/// Because this scheme deliberately has no wrong-PIN attempt counter/lockout (see the module
+/// docs above), the *only* thing standing between an attacker who has extracted a copy of the
+/// locked-seed blob (e.g. by dumping the underlying storage directly, bypassing whatever
+/// process-level access control the host OS would normally enforce) and the plaintext seed is
+/// how long it takes to brute-force the PIN *offline*, at [`PBKDF2_ITERATIONS`] rounds of
+/// PBKDF2-HMAC-SHA256 per guess. Unlike a memory-hard KDF (Argon2/scrypt), plain PBKDF2-SHA256
+/// is cheap to parallelize on GPUs/FPGAs/ASICs, so a short numeric PIN's *entire* keyspace
+/// (e.g. a 6-digit PIN is only 1,000,000 possibilities) can be exhausted in well under an hour
+/// on commodity hardware, no matter how expensive each individual guess is made. Requiring a
+/// longer PIN is the only lever this design has left to keep that offline keyspace large
+/// enough to matter.
+pub const MIN_PIN_LEN: usize = 8;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum PinError {
     /// AEAD authentication failed -- either the PIN was wrong, or the locked blob is corrupt.
     WrongPinOrCorrupt,
     /// The locked blob wasn't exactly [`LOCKED_SEED_LEN`] bytes.
     Malformed,
+    /// The PIN didn't pass [`check_pin_strength`] -- see that function's docs for why this is
+    /// enforced (this scheme has no lockout, so PIN entropy is the only real defense left
+    /// against an attacker who has extracted a copy of the locked-seed blob).
+    TooWeak,
+}
+
+/// Rejects PINs that would leave an extracted locked-seed blob too cheap to brute-force
+/// offline, given this scheme's no-lockout design (see [`MIN_PIN_LEN`]'s docs). Specifically
+/// rejects:
+///   - PINs shorter than [`MIN_PIN_LEN`] characters,
+///   - PINs made of a single repeated character (e.g. `"11111111"`), and
+///   - purely ascending or descending runs (e.g. `"12345678"` / `"87654321"`),
+///
+/// since all three are exactly the patterns a real-world attacker's guess list would try
+/// first, effectively for free, regardless of the raw keyspace size implied by the length
+/// alone. This is a floor, not a full strength meter -- a longer, non-numeric PIN is always
+/// better, but this catches the most common trivially-weak choices without requiring a
+/// specific character-class mix (this is typed at a plain serial console with no display to
+/// show a strength meter).
+pub fn check_pin_strength(pin: &str) -> Result<(), PinError> {
+    let bytes = pin.as_bytes();
+    if bytes.len() < MIN_PIN_LEN {
+        return Err(PinError::TooWeak);
+    }
+    if bytes.iter().all(|&b| b == bytes[0]) {
+        return Err(PinError::TooWeak);
+    }
+    let is_monotonic_run = bytes.windows(2).all(|w| w[1] as i32 - w[0] as i32 == 1)
+        || bytes.windows(2).all(|w| w[0] as i32 - w[1] as i32 == 1);
+    if is_monotonic_run {
+        return Err(PinError::TooWeak);
+    }
+    Ok(())
 }
 
 fn derive_key(pin: &str, salt: &[u8; SALT_LEN]) -> [u8; 32] {
@@ -174,5 +222,32 @@ mod tests {
             Err(PinError::Malformed) => {}
             other => panic!("expected Malformed, got {:?}", other.map(|_| ())),
         }
+    }
+
+    #[test]
+    fn short_pins_are_too_weak() {
+        assert_eq!(check_pin_strength("1234"), Err(PinError::TooWeak));
+        assert_eq!(check_pin_strength("1234567"), Err(PinError::TooWeak)); // one short of MIN_PIN_LEN
+        assert_eq!(check_pin_strength(""), Err(PinError::TooWeak));
+    }
+
+    #[test]
+    fn repeated_char_pins_are_too_weak() {
+        assert_eq!(check_pin_strength("11111111"), Err(PinError::TooWeak));
+        assert_eq!(check_pin_strength("aaaaaaaaaaaa"), Err(PinError::TooWeak));
+    }
+
+    #[test]
+    fn monotonic_run_pins_are_too_weak() {
+        assert_eq!(check_pin_strength("12345678"), Err(PinError::TooWeak));
+        assert_eq!(check_pin_strength("87654321"), Err(PinError::TooWeak));
+        assert_eq!(check_pin_strength("abcdefgh"), Err(PinError::TooWeak));
+    }
+
+    #[test]
+    fn adequate_pins_are_accepted() {
+        assert_eq!(check_pin_strength("13975108"), Ok(())); // 8 digits, not monotonic/repeated
+        assert_eq!(check_pin_strength("correct horse battery staple"), Ok(()));
+        assert_eq!(check_pin_strength(&("9".repeat(MIN_PIN_LEN - 1) + "0")), Ok(())); // exactly MIN_PIN_LEN, not all-repeated
     }
 }
