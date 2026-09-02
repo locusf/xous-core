@@ -929,6 +929,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             builder.add_kernel_feature("v2p");
             builder.add_kernel_feature("print-panics");
             builder.add_kernel_feature("debug-proc");
+            if get_cratespecs().iter().any(|spec| spec.split('~').next() == Some("bio-stream")) {
+                builder.add_feature("usb-bao1x/hwrng");
+            }
             match task.as_deref() {
                 Some("dabao") => builder.target_bao1x_soc(),
                 _ => panic!("should be unreachable"),

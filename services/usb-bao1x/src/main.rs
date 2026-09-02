@@ -2,6 +2,8 @@ mod api;
 mod debug;
 #[cfg(target_os = "xous")]
 mod hw;
+#[cfg(all(target_os = "xous", feature = "hwrng"))]
+mod hwrng;
 #[cfg(not(target_os = "xous"))]
 mod main_hosted;
 mod mappings;

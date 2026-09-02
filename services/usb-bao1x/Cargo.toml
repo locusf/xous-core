@@ -60,6 +60,7 @@ board-baosec = [
 ]
 oem-baosec-lite = ["bao1x-hal/oem-baosec-lite"]
 board-dabao = ["utralib/bao1x", "utralib/std", "bao1x-hal", "bao1x-hal-service"]
+hwrng = []
 hosted-baosec = ["utralib/hosted", "utralib/std", "bao1x-emu"]
 # none of these other modes are actually supported, but are listed here
 # to allow direct re-use of API code

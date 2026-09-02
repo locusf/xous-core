@@ -4,12 +4,15 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, compiler_fence};
 use std::sync::atomic::{AtomicPtr, Ordering};
 
+#[cfg(feature = "hwrng")]
+use crate::hwrng::HwrngPort;
 use bao1x_hal::usb::driver::*;
 use bao1x_hal::usb::utra::*;
 use num_traits::*;
 use usb_device::class_prelude::*;
 use usb_device::device::UsbDevice;
 use usb_device::prelude::*;
+#[cfg(not(feature = "hwrng"))]
 use usbd_serial::SerialPort;
 use utralib::{AtomicCsr, utra};
 use xous::Message;
@@ -48,6 +51,9 @@ pub struct Bao1xUsb<'a> {
     >,
     // storage for hid_packets to expatriate from the interrupt handler
     pub hid_packet: VecDeque<[u8; 64]>,
+    #[cfg(feature = "hwrng")]
+    pub serial_port: HwrngPort<'a, CorigineWrapper>,
+    #[cfg(not(feature = "hwrng"))]
     pub serial_port: SerialPort<'a, CorigineWrapper, [u8; 1024], [u8; 1024]>,
     // holds one HS packet - must be statically allocated in IRQ handler. Valid length is
     // passed as part of the interrupt recovery message.
@@ -69,13 +75,18 @@ impl<'a> Bao1xUsb<'a> {
         usb_alloc: &'a UsbBusAllocator<CorigineWrapper>,
         serial_number: &'a String,
     ) -> Self {
+        #[cfg(feature = "hwrng")]
+        let serial_port = HwrngPort::new(usb_alloc, 64);
         let class = UsbHidClassBuilder::new()
             .add_device(NKROBootKeyboardConfig::default())
             .add_device(RawFidoConfig::default())
             .build(usb_alloc);
 
+        #[cfg(not(feature = "hwrng"))]
         let rx_buf = [0u8; SERIAL_MAX_PACKET_SIZE * 2];
+        #[cfg(not(feature = "hwrng"))]
         let tx_buf = [0u8; SERIAL_MAX_PACKET_SIZE * 2];
+        #[cfg(not(feature = "hwrng"))]
         let serial_port = SerialPort::new_with_store(&usb_alloc, rx_buf, tx_buf);
         // HACK ALERT: due to a shortcoming in the usb-device implementation, inside the interrupt handler we
         // have to catch and parse SETUP-OUT sequences. Basically the driver assumes that the OUT endpoint is
@@ -94,10 +105,14 @@ impl<'a> Bao1xUsb<'a> {
         let product = "Baosec";
         #[cfg(feature = "board-baosec")]
         let pid = 0x6198;
-        #[cfg(feature = "board-dabao")]
+        #[cfg(all(feature = "board-dabao", not(feature = "hwrng")))]
         let product = "Dabao";
-        #[cfg(feature = "board-dabao")]
+        #[cfg(all(feature = "board-dabao", not(feature = "hwrng")))]
         let pid = 0x6197;
+        #[cfg(all(feature = "board-dabao", feature = "hwrng"))]
+        let product = "Dabao ChaosKey";
+        #[cfg(all(feature = "board-dabao", feature = "hwrng"))]
+        let pid = 0x60c6;
         let device = UsbDeviceBuilder::new(&usb_alloc, UsbVidPid(0x1d50, pid))
             .manufacturer("Baochip")
             .product(product)

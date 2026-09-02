@@ -27,5 +27,6 @@ board-dabao = [
     "bao1x-hal-service/board-dabao",
     "bao1x-hal/board-dabao",
     "usb-bao1x/board-dabao",
+    "usb-bao1x/hwrng",
 ]
 default = []

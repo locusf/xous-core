@@ -1,8 +1,8 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use bao1x_hal_service::trng::Trng;
 use usb_bao1x::{SERIAL_BINARY_BUFLEN, UsbDeviceState, UsbHid};
 
-const START_DELAY_MS: usize = 3000;
 const TX_BLOCK_SIZE: usize = SERIAL_BINARY_BUFLEN;
 const REPORT_INTERVAL_MS: usize = 1000;
 
@@ -14,15 +14,9 @@ static OK_INTERVAL: AtomicU32 = AtomicU32::new(0);
 static ZERO_INTERVAL: AtomicU32 = AtomicU32::new(0);
 static ERROR_INTERVAL: AtomicU32 = AtomicU32::new(0);
 
-fn make_test_pattern() -> [u8; TX_BLOCK_SIZE] {
+fn make_random_block(trng: &mut Trng) -> [u8; TX_BLOCK_SIZE] {
     let mut data = [0u8; TX_BLOCK_SIZE];
-
-    let mut index = 0usize;
-    while index < TX_BLOCK_SIZE {
-        data[index] = index as u8;
-        index += 1;
-    }
-
+    trng.fill_seeded_bytes(&mut data);
     data
 }
 
@@ -70,21 +64,20 @@ fn main() -> ! {
     let timer = ticktimer::Ticktimer::new().expect("could not connect to ticktimer");
 
     let usb = UsbHid::new();
+    let xns = xous_names::XousNames::new().expect("could not connect to XousNames");
+    let mut trng = Trng::new(&xns).expect("could not initialize TRNG");
 
-    log::info!("USB CDC transmit stress test started: PID={}", xous::process::id());
+    log::info!("USB CDC hardware RNG started: PID={}", xous::process::id());
 
     log::info!("waiting for USB configuration");
     wait_until_usb_configured(&usb, &timer);
 
-    log::info!("USB configured; transmission starts in {} ms", START_DELAY_MS);
+    log::info!("USB configured; random-number transmission starts");
 
     start_reporter_thread();
 
-    timer.sleep_ms(START_DELAY_MS).ok();
-
-    let tx_data = make_test_pattern();
-
     loop {
+        let tx_data = make_random_block(&mut trng);
         let mut offset = 0usize;
 
         while offset < tx_data.len() {
